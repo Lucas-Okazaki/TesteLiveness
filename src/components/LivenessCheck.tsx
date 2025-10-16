@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, Card, CardActions, CardContent, LinearProgress, Stack, Typography, Alert } from '@mui/material';
 import { useCamera } from '../hooks/useCamera';
 import { runLivenessSequence, supported } from '../utils/liveness';
+import type { Challenge, LivenessResult } from '../utils/liveness';
 
 export function LivenessCheck({ onResult }: { onResult: (r: LivenessResult) => void }) {
   const { videoRef, isReady, error, start, stop } = useCamera();
@@ -25,6 +26,8 @@ export function LivenessCheck({ onResult }: { onResult: (r: LivenessResult) => v
 
   const hint = useMemo(() => {
     switch (currentChallenge) {
+      case 'prepare':
+        return 'Posicione seu rosto dentro do quadro';
       case 'blink':
         return 'Pisca alguns vezes';
       case 'turn-left':

@@ -4,7 +4,7 @@ export type LivenessResult = {
   steps: Array<{ name: string; passed: boolean; details?: string }>;
 };
 
-export type Challenge = 'blink' | 'turn-left' | 'turn-right' | 'smile';
+export type Challenge = 'prepare' | 'blink' | 'turn-left' | 'turn-right';
 
 export const supported = {
   faceDetector: 'FaceDetector' in window,
@@ -91,6 +91,17 @@ export async function runLivenessSequence(
     return new Promise((r) => setTimeout(r, ms));
   }
 
+  async function waitForFacePresent(maxMs = 4000) {
+    const start = Date.now();
+    while (Date.now() - start < maxMs) {
+      await captureToCanvas(video, canvas);
+      const box = await detectFaceBox(canvas);
+      if (box) return true;
+      await wait(200);
+    }
+    return false;
+  }
+
   async function checkMovement(direction: 'left' | 'right') {
     await captureToCanvas(video, canvas);
     const box1 = await detectFaceBox(canvas);
@@ -114,18 +125,26 @@ export async function runLivenessSequence(
     return da > 6; // small threshold
   }
 
+  // Preparation: ensure face is visible before starting
+  onChallenge?.('prepare');
+  const ready = await waitForFacePresent(5000);
+  steps.push({ name: 'prepare', passed: ready });
+  if (!ready) return { alive: false, reason: 'Rosto não detectado. Centralize seu rosto e tente novamente.', steps };
+
   const challenges: Challenge[] = ['blink', 'turn-left', 'turn-right'];
 
   for (const ch of challenges) {
     onChallenge?.(ch);
     let passed = false;
-    if (ch === 'blink') passed = await checkBlink();
-    if (ch === 'turn-left') passed = await checkMovement('left');
-    if (ch === 'turn-right') passed = await checkMovement('right');
-    steps.push({ name: ch, passed });
-    if (!passed) {
-      return { alive: false, reason: `Falha no desafio: ${ch}`, steps };
+    const deadline = Date.now() + 5000; // give up to 5s per challenge
+    while (!passed && Date.now() < deadline) {
+      if (ch === 'blink') passed = await checkBlink();
+      if (ch === 'turn-left') passed = await checkMovement('left');
+      if (ch === 'turn-right') passed = await checkMovement('right');
+      if (!passed) await wait(300);
     }
+    steps.push({ name: ch, passed });
+    if (!passed) return { alive: false, reason: `Falha no desafio: ${ch}`, steps };
   }
 
   return { alive: true, steps };
