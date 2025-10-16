@@ -114,15 +114,53 @@ export async function runLivenessSequence(
   }
 
   async function checkBlink() {
-    // heuristic: detect face area change between two frames
+    // Improved heuristic: measure pixel differences in the eye band region
+    function computeEyeBand(box: FaceBox) {
+      const ex = Math.max(0, Math.floor(box.x));
+      const ey = Math.max(0, Math.floor(box.y + box.height * 0.25));
+      const ew = Math.floor(box.width);
+      const eh = Math.floor(box.height * 0.25); // focus on eyes/eyelids
+      return { ex, ey, ew, eh };
+    }
+
+    function diffInRegion(a: ImageData, b: ImageData, rx: number, ry: number, rw: number, rh: number) {
+      let total = 0;
+      let changed = 0;
+      const w = a.width;
+      for (let y = ry; y < ry + rh; y++) {
+        for (let x = rx; x < rx + rw; x++) {
+          const i = (y * w + x) * 4;
+          const dr = Math.abs(a.data[i] - b.data[i]);
+          const dg = Math.abs(a.data[i + 1] - b.data[i + 1]);
+          const db = Math.abs(a.data[i + 2] - b.data[i + 2]);
+          const d = (dr + dg + db) / 3;
+          if (d > 18) changed++;
+          total++;
+        }
+      }
+      return total === 0 ? 0 : changed / total;
+    }
+
+    // Take few samples to be robust
     await captureToCanvas(video, canvas);
-    const a = await detectFaceBox(canvas);
-    await wait(200);
+    const firstBox = await detectFaceBox(canvas);
+    if (!firstBox) return false;
+    const { ex, ey, ew, eh } = computeEyeBand(firstBox);
+    const a = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height);
+    await wait(140);
     await captureToCanvas(video, canvas);
-    const b = await detectFaceBox(canvas);
-    if (!a || !b) return false;
-    const da = Math.abs(a.height - b.height) + Math.abs(a.width - b.width);
-    return da > 6; // small threshold
+    const b = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height);
+
+    const score1 = diffInRegion(a, b, ex, ey, ew, eh);
+
+    await wait(140);
+    await captureToCanvas(video, canvas);
+    const c = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height);
+    const score2 = diffInRegion(b, c, ex, ey, ew, eh);
+
+    // Blink tends to produce a short spike in eye-band differences
+    const score = Math.max(score1, score2);
+    return score > 0.06; // ~6% of pixels changed in the eye band
   }
 
   // Preparation: ensure face is visible before starting
